@@ -12,5 +12,5 @@ export GEMINI_API_KEY='your-key'
 Run it:
 
 ```bash
-python classify_issues.py --input selected_issues.csv --output classified_issues.csv --model gemini-3.5-flash --max-rows 100
+python classify_issues.py --input selected_issues.csv --output classified_issues.csv --model gemini-3.1-flash-lite-preview --max-rows 100
 ```

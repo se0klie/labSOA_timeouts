@@ -163,7 +163,7 @@ def output_row(issue_id: str, model: str, prompt_version: str, result: dict[str,
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True, type=Path); parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--model", default="gemini-3.5-flash")
+    parser.add_argument("--model", default="gemini-3.1-flash-lite-preview")
     parser.add_argument("--max-rows", type=int); parser.add_argument("--start-index", type=int, default=0)
     parser.add_argument("--api-key-env", default="GEMINI_API_KEY"); parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--prompt-version", default=PROMPT_VERSION); args = parser.parse_args()
