@@ -12,5 +12,12 @@ export GEMINI_API_KEY='your-key'
 Run it:
 
 ```bash
-python classify_issues.py --input selected_issues.csv --output classified_issues.csv --model gemini-3.1-flash-lite-preview --max-rows 100
+python classifier_agent.py --input whole_jira_csv.csv --output classified_issues.csv --model gemini-3.1-flash-lite-preview --max-rows 100
 ```
+
+```bash
+python heuristics_agent.py --input whole_jira_csv.csv --classifications classified_issues.csv --output heuristics.csv --model gemini-3.1-flash-lite-preview --max-rows 100
+```
+
+
+

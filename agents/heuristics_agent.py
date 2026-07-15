@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Agent 2: extract grounded RPC timeout-setting heuristics from eligible JIRA issues."""
 from __future__ import annotations
 
