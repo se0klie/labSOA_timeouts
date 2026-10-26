@@ -33,14 +33,6 @@ BASE_URL = "https://issues.apache.org/jira/rest/api/2"
 DEFAULT_PAGE_SIZE = 50
 REQUEST_TIMEOUT_SECONDS = 30
 
-# Cada palabra genera una consulta JQL independiente. Acotado a términos que
-# nombran directamente un timeout de RPC. Términos genéricos como "retry",
-# "latency", "throughput", "coordinator", "messaging" o "rpc" solos se
-# sacaron: matchean issues sobre cualquier tema (ej. throughput de
-# compactación no tiene nada que ver con timeouts de RPC) y diluyen el
-# dataset. Si hace falta ese contexto más amplio, es mejor analizarlo sobre
-# el texto ya bajado (summary/description/comments) en vez de usarlo como
-# criterio de búsqueda.
 RPC_TIMEOUT_KEYWORDS = [
     "timeout",
     "rpc timeout",
@@ -61,48 +53,47 @@ RPC_TIMEOUT_KEYWORDS = [
 
 
 # ---------------------------------------------------------------------------
-# Criterios de selección para issues que aportan evidencia sobre POR QUÉ se
-# configuró un timeout de cierta forma. No basta con mencionar "timeout":
-# buscamos justificación, cambio de valor, trade-offs, pruebas o razonamiento.
+# Selection criteria for issues that support evidence on WHY was timeout configured in that specific way.
+# It's not enough to mention "timeout". It looks for explanation, reasoning, value changes, trade-offs.
 # ---------------------------------------------------------------------------
 
 INCLUSION_PATTERNS: dict[str, list[str]] = {
-    "configuracion_valor": [
+    "value_configuration": [
         r"\b(?:increase|decrease|raise|lower|reduce|change|set|configure|default)\w*\b.{0,80}\btimeout\b",
         r"\btimeout\b.{0,80}\b(?:increase|decrease|raise|lower|reduce|change|set|configure|default)\w*\b",
         r"\b\d+(?:\.\d+)?\s*(?:ms|milliseconds?|s|sec|seconds?|m|min|minutes?)\b",
     ],
-    "justificacion": [
+    "reasoning": [
         r"\b(?:because|since|therefore|thus|so that|in order to|reason|rationale|why)\b",
         r"\b(?:too low|too high|too short|too long|aggressive|conservative)\b",
         r"\b(?:client expects?|expected by the client|from the client perspective)\b",
     ],
-    "rendimiento_tradeoff": [
+    "performance_tradeoff": [
         r"\b(?:latency|throughput|performance|overhead|load|workload|queue|contention|resource)\b",
         r"\b(?:trade[- ]?off|impact|degrad|regression|slow(?:er)?|fast(?:er)?)\w*\b",
     ],
-    "experimento_evidencia": [
+    "evidence": [
         r"\b(?:benchmark|experiment|test result|stress test|load test|measurement|measured|observed|production)\b",
         r"\b(?:p50|p90|p95|p99|percentile|average latency|mean latency)\b",
     ],
-    "mecanismo_timeout": [
+    "timeout_mechanism": [
         r"\b(?:deadline|remaining timeout|timeout budget|propagat\w* timeout|elapsed time)\b",
         r"\b(?:readrpctimeout|writerpctimeout|rangerpctimeout|rpc timeout|request timeout|response timeout)\b",
     ],
 }
 
 EXCLUSION_PATTERNS: dict[str, list[str]] = {
-    "solo_pruebas_ci": [
+    "only_test": [
         r"\b(?:jenkins|circleci|github actions|buildkite|maven|gradle)\b.{0,80}\btimeout\b",
         r"\b(?:unit test|integration test|test suite|flaky test|dtest)\b.{0,80}\btimeout\b",
     ],
-    "solo_logs_o_error": [
+    "only_logs": [
         r"\b(?:stack trace|stacktrace|exception log|log message)\b",
     ],
-    "ui_o_usuario": [
+    "ui_user": [
         r"\b(?:gui|user interface|browser|web ui|screen|user input)\b.{0,80}\btimeout\b",
     ],
-    "proceso_local_no_rpc": [
+    "not_rpc": [
         r"\b(?:local lock|mutex|semaphore|thread join|sleep timeout|process timeout)\b",
     ],
 }
@@ -112,33 +103,26 @@ TIMEOUT_VALUE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Resoluciones que cuentan como "hay un fix real" que analizar. En los
-# proyectos Apache relevantes (Cassandra, Kafka, HBase, Hadoop, Ratis, CXF),
-# "Fixed" es la ampliamente dominante, pero "Done" e "Implemented" también
-# representan cambios reales (a veces usados para features/mejoras en vez
-# de bugs). El resto de las resoluciones (Won't Fix, Not A Problem, Cannot
-# Reproduce, Duplicate, Invalid, etc.) no tienen un fix que estudiar.
+# The issues taken have a real fix to analyze: Fixed, Done or Implemented.
 REAL_FIX_RESOLUTIONS = {"Fixed", "Done", "Implemented"}
 
 
 class JiraScraperError(RuntimeError):
-    """Error controlado producido al consultar Jira."""
+    """Error: GET Jira API."""
 
 
 def nested_name(value: Any) -> str | None:
-    """{"id": "5", "name": "Resolved"} -> "Resolved" """
     return value.get("name") if isinstance(value, dict) else None
 
 
 def user_display_name(value: Any) -> str | None:
-    """Nombre visible de un usuario Jira."""
+    """Visible username on Jira."""
     if not isinstance(value, dict):
         return None
     return value.get("displayName") or value.get("name") or value.get("key")
 
 
 def list_names(values: Any) -> list[str]:
-    """[{"name": "4.0"}, {"name": "4.1"}] -> ["4.0", "4.1"]"""
     if not isinstance(values, list):
         return []
     return [str(v["name"]) for v in values if isinstance(v, dict) and v.get("name")]
@@ -146,10 +130,9 @@ def list_names(values: Any) -> list[str]:
 
 def extract_issue_links(issue_links: Any) -> list[dict[str, Any]]:
     """
-    Normaliza las relaciones entre issues.
-
-    outwardIssue: la relación sale desde la issue actual hacia otra.
-    inwardIssue: la relación entra desde otra issue hacia la actual.
+    Normalizes relation between issues-
+    outwardIssue: Relation comes from the actual issue to another.
+    inwardIssue: Relation comes from another issue to the current one-
     """
     if not isinstance(issue_links, list):
         return []
@@ -181,7 +164,7 @@ def extract_issue_links(issue_links: Any) -> list[dict[str, Any]]:
 
 
 def extract_comments(comment_field: Any) -> list[dict[str, Any]]:
-    """Extrae los comentarios de una issue."""
+    """Comment extractor."""
     if not isinstance(comment_field, dict):
         return []
     return [
@@ -198,7 +181,7 @@ def extract_comments(comment_field: Any) -> list[dict[str, Any]]:
 
 
 def extract_changelog(changelog: Any) -> list[dict[str, Any]]:
-    """Extrae el historial de modificaciones (ej. status: Open -> Resolved)."""
+    """Gets modification history. (i.e. status: Open -> Resolved)."""
     if not isinstance(changelog, dict):
         return []
 
@@ -222,7 +205,7 @@ def extract_changelog(changelog: Any) -> list[dict[str, Any]]:
 
 
 def normalize_issue(issue: dict[str, Any]) -> dict[str, Any]:
-    """Convierte la respuesta grande de Jira en un registro más simple."""
+    """Converts the whole response into a format registry."""
     fields = issue.get("fields") or {}
     project = fields.get("project") or {}
     comments = extract_comments(fields.get("comment"))
@@ -254,7 +237,6 @@ def normalize_issue(issue: dict[str, Any]) -> dict[str, Any]:
         "comments": comments,
         "issue_links": extract_issue_links(fields.get("issuelinks")),
         "changelog": extract_changelog(issue.get("changelog")),
-        # Se completa después de realizar las búsquedas por palabras clave.
         "matched_keywords": [],
         "attachments": [
             {
@@ -270,7 +252,7 @@ def normalize_issue(issue: dict[str, Any]) -> dict[str, Any]:
 
 
 def _issue_text(issue: dict[str, Any]) -> str:
-    """Une los campos textuales que se usarán para aplicar los criterios."""
+    """Joins text fields used to analyze criteria."""
     comments = "\n".join(str(c.get("body") or "") for c in issue.get("comments", []))
     return "\n".join([
         str(issue.get("summary") or ""),
@@ -281,18 +263,12 @@ def _issue_text(issue: dict[str, Any]) -> str:
 
 def evaluate_selection_criteria(issue: dict[str, Any]) -> dict[str, Any]:
     """
-    Evalúa inclusión/exclusión de manera explicable.
-
-    Regla principal:
-    - Debe existir evidencia del mecanismo RPC/timeout.
-    - Y además evidencia de al menos uno de estos aspectos:
-      configuración de valor, justificación, rendimiento/trade-off o experimento.
-    - Y la issue debe tener un fix real (resolution == "Fixed"): el estudio es
-      sobre patrones de fix, así que una issue Open, Won't Fix, Not A Problem
-      o Cannot Reproduce no aporta un fix que analizar, aunque el texto
-      razone sobre el timeout.
-    - Las exclusiones fuertes descartan issues cuyo contexto sea únicamente
-      pruebas/CI, UI o procesos locales sin relación con RPC.
+    Evaluates inclusion/exclusion criteria.
+    Main rule:
+    - A real RPC/timeout mechanism evidence has to exist.
+    - Evidence from at least one of the following aspects: value change, reasoning, trade-off or experiment.
+    - Issue has a real fix (Done, Implemented or Fixed as resolution state) or is not closed.
+    - Harsh exclusions will discard issues related only to tests, UI or local processes not related to RPCs.
     """
     text = _issue_text(issue)
     lower_text = text.lower()
@@ -318,77 +294,59 @@ def evaluate_selection_criteria(issue: dict[str, Any]) -> dict[str, Any]:
 
     timeout_values = sorted(set(TIMEOUT_VALUE_PATTERN.findall(text)))
 
-    # Indicadores semánticos principales.
-    #
-    # has_rpc_timeout solo mira si aparece una keyword de RPC_TIMEOUT_KEYWORDS
-    # (sin contar "timeout" sola, para no matchear cualquier cosa). La
-    # categoría "mecanismo_timeout" se movió a has_reasoning: describe CÓMO
-    # funciona el timeout (deadline, timeout budget, etc.), no si el timeout
-    # es de RPC o no, así que es más un tipo de razonamiento que evidencia
-    # de "esto es RPC".
+    # has_rpc_timeout reviews if there is any keyword from RPC_TIMEOUT_KEYWORDS.
     has_rpc_timeout = any(k.lower() in lower_text for k in RPC_TIMEOUT_KEYWORDS if k.lower() != "timeout")
 
-    # configuracion_valor es obligatorio: el estudio es sobre patrones de
-    # fix, así que necesitamos evidencia de que se discutió/cambió un valor
-    # o configuración de timeout, no solo que se justificó o se midió
-    # rendimiento en el aire. Las otras categorías son contexto de apoyo
-    # (alcanza con 1 de esas 4 para confirmar que hay razonamiento real).
-    has_value_change = "configuracion_valor" in inclusion_hits
+    # value_configuration is mandatory. There should be evidence on discussing and changing a value or timeout configuration.
+    # Other categories are supporting fields.
+    has_value_change = "value_configuration" in inclusion_hits
     has_reasoning = any(
         category in inclusion_hits
         for category in (
-            "justificacion",
-            "rendimiento_tradeoff",
-            "experimento_evidencia",
-            "mecanismo_timeout",
+            "reasoning",
+            "performance_tradeoff",
+            "evidence",
+            "timeout_mechanism",
         )
     )
 
-    # Puntuación transparente para ordenar candidatos.
+    # Scoring to sort candidates.
     score = 0
     score += 3 if has_rpc_timeout else 0
-    score += 3 if "configuracion_valor" in inclusion_hits else 0
-    score += 3 if "justificacion" in inclusion_hits else 0
-    score += 2 if "rendimiento_tradeoff" in inclusion_hits else 0
-    score += 2 if "experimento_evidencia" in inclusion_hits else 0
+    score += 3 if "value_configuration" in inclusion_hits else 0
+    score += 3 if "reasoning" in inclusion_hits else 0
+    score += 2 if "performance_tradeoff" in inclusion_hits else 0
+    score += 2 if "evidence" in inclusion_hits else 0
     score += 1 if timeout_values else 0
 
     strong_exclusion = any(
         category in exclusion_hits
-        for category in ("solo_pruebas_ci", "ui_o_usuario", "proceso_local_no_rpc")
+        for category in ("only_test", "ui_user", "not_rpc")
     )
 
-    # Cuenta como válida si resolution está en REAL_FIX_RESOLUTIONS (ya se
-    # aplicó un fix) o si todavía no tiene resolution (issue.get("resolution")
-    # is None): en Jira resolution solo se setea al resolver/cerrar, así que
-    # "sin resolución" cubre cualquier estado activo (Open, Triage Needed,
-    # In Progress, Patch Available, etc.) sin tener que enumerar cada nombre
-    # de estado a mano -- y como el workflow de estados varía por proyecto
-    # (CXF cierra como "Closed" en vez de "Resolved", por ejemplo), resolution
-    # es el campo consistente entre todos. Won't Fix, Not A Problem, Cannot
-    # Reproduce, Duplicate, Invalid, etc. quedan afuera: ahí se cerró sin que
-    # haya un fix ni la posibilidad de que lo haya en el futuro.
+    # Is valid if the resolution is inside REAL_FIX_RESOLUTIONS or has no fix yet but is not closed.
+    # Won't Fix, Not A Problem, Cannot Reproduce, Duplicate, Invalid, etc. are out.
     has_real_fix = issue.get("resolution") in REAL_FIX_RESOLUTIONS or issue.get("resolution") is None
 
     included = has_rpc_timeout and has_value_change and has_reasoning and has_real_fix and not strong_exclusion
 
     if included:
         decision_reason = (
-            f"Incluida: contiene evidencia de timeout RPC, un cambio de configuración/valor, "
-            f"razonamiento de apoyo, y tiene fix o todavía no se resolvió "
+            f"Included: contians evidence on RPC timeout, a configuration or value change, "
+            f"reasoning and has a fix or is not resolved yet"
             f"(status={issue.get('status')!r}, resolution={issue.get('resolution')!r})."
         )
     elif strong_exclusion:
-        decision_reason = "Excluida: el contexto coincide con un criterio fuerte de exclusión."
+        decision_reason = "Excluded: context matches with a strong exclusion criteria."
     elif not has_rpc_timeout:
-        decision_reason = "Excluida: no hay evidencia suficiente de que sea un timeout RPC."
+        decision_reason = "Excluded: there is no enough evidence that supports the current issue to be RPC timeout related."
     elif not has_value_change:
-        decision_reason = "Excluida: no se discute un cambio de valor/configuración del timeout."
+        decision_reason = "Excluded: there is no discussion about a value or configuration change."
     elif not has_reasoning:
-        decision_reason = "Excluida: hay cambio de configuración, pero no explica por qué o con qué evidencia."
+        decision_reason = "Excluded: there is a configuration change but there is no discussion or reasoning."
     else:
         decision_reason = (
-            f"Excluida: se cerró sin un fix real "
+            f"Excluded: Closed without a real fix"
             f"(status={issue.get('status')!r}, resolution={issue.get('resolution')!r})."
         )
 
@@ -407,7 +365,7 @@ def evaluate_selection_criteria(issue: dict[str, Any]) -> dict[str, Any]:
 
 
 def apply_selection_criteria(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Añade la evaluación a cada issue y devuelve solo las incluidas."""
+    """Adds evaluation to each issue and returns only the included."""
     filtered: list[dict[str, Any]] = []
     for issue in issues:
         evaluation = evaluate_selection_criteria(issue)
@@ -418,8 +376,6 @@ def apply_selection_criteria(issues: list[dict[str, Any]]) -> list[dict[str, Any
 
 
 class ApacheJiraClient:
-    """Cliente para consultar la API REST de Apache Jira."""
-
     def __init__(self, base_url: str = BASE_URL, delay_seconds: float = 0.2) -> None:
         self.base_url = base_url.rstrip("/")
         self.delay_seconds = max(delay_seconds, 0.0)
@@ -430,29 +386,27 @@ class ApacheJiraClient:
         })
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Realiza una petición GET a Jira."""
         url = f"{self.base_url}/{path.lstrip('/')}"
         try:
             response = self.session.get(url, params=params, timeout=REQUEST_TIMEOUT_SECONDS)
         except requests.RequestException as exc:
             raise JiraScraperError(f"No se pudo conectar con Jira: {exc}") from exc
 
-        # Jira puede responder 429 cuando se hacen demasiadas peticiones.
         if response.status_code == 429:
             retry_after = int(response.headers.get("Retry-After", "5"))
-            print(f"Jira limitó las peticiones. Esperando {retry_after} segundos...")
+            print(f"Jira limited the requests. Waiting {retry_after} seconds...")
             time.sleep(retry_after)
             return self._get(path, params)
 
         try:
             response.raise_for_status()
         except requests.HTTPError as exc:
-            raise JiraScraperError(f"Jira respondió HTTP {response.status_code}: {response.text[:500]}") from exc
+            raise JiraScraperError(f"Jira returned HTTP {response.status_code}: {response.text[:500]}") from exc
 
         try:
             data = response.json()
         except ValueError as exc:
-            raise JiraScraperError("Jira no devolvió JSON válido.") from exc
+            raise JiraScraperError("Jira didn't return a valid JSON.") from exc
 
         if self.delay_seconds:
             time.sleep(self.delay_seconds)
@@ -462,17 +416,12 @@ class ApacheJiraClient:
         self, jql: str, start_at: int = 0, limit: int | None = None, page_size: int = DEFAULT_PAGE_SIZE
     ) -> list[str]:
         """
-        Ejecuta una búsqueda JQL y obtiene las claves de las issues aplicando
-        paginación.
-
-        start_at permite arrancar en una posición específica del resultado
-        (0 = la primera issue que devuelve la búsqueda), para poder bajar el
-        listado en tandas manuales (ej. 1-100, después 101-200) sin repetir
-        lo ya descargado. Ejemplo de clave: CASSANDRA-15442
+        Executes JQL search.
+        start_at allows starting in a specific result position
         """
         keys: list[str] = []
         current_start = start_at
-        page_size = min(max(page_size, 1), 100)  # Jira normalmente limita el tamaño de página.
+        page_size = min(max(page_size, 1), 100)  
 
         while True:
             remaining = None if limit is None else limit - len(keys)
@@ -484,7 +433,7 @@ class ApacheJiraClient:
                 "jql": jql,
                 "startAt": current_start,
                 "maxResults": current_size,
-                "fields": "key",  # la búsqueda solamente necesita la clave de la issue.
+                "fields": "key", 
             })
 
             issues = data.get("issues", [])
@@ -496,7 +445,7 @@ class ApacheJiraClient:
             total = int(data.get("total", len(keys)))
 
             print(
-                f"\rIssues encontradas: {len(keys)} (posiciones {start_at + 1}-{current_start} de {total})",
+                f"\rFound  {len(keys)} issues. (positions: {start_at + 1}-{current_start} out of {total})",
                 end="", flush=True,
             )
 
@@ -510,11 +459,7 @@ class ApacheJiraClient:
         self, project: str, keywords: list[str], limit_per_keyword: int | None = None
     ) -> dict[str, list[str]]:
         """
-        Ejecuta una consulta JQL independiente por cada palabra clave.
-
-        Retorna {"CASSANDRA-15442": ["timeout", "ReadRPCTimeout", "deadline"]}
-        para que una issue encontrada por varias consultas solamente se
-        descargue una vez.
+        Executes JQL query independently by every keyword.
         """
         matches: dict[str, list[str]] = {}
         project = project.strip().upper()
@@ -532,7 +477,6 @@ class ApacheJiraClient:
         return matches
 
     def get_issue(self, issue_key: str) -> dict[str, Any]:
-        """Descarga una issue completa. expand=changelog trae el historial."""
         fields = ",".join([
             "project", "summary", "description", "issuetype", "status", "resolution",
             "priority", "reporter", "assignee", "creator", "created", "updated",
@@ -543,13 +487,11 @@ class ApacheJiraClient:
 
 
 def save_json(issues: list[dict[str, Any]], output_path: Path) -> None:
-    """Guarda los resultados completos en JSON."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(issues, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def save_csv(issues: list[dict[str, Any]], output_path: Path) -> None:
-    """Guarda una versión tabular en CSV. Las listas se unen con ';'."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     columns = [
@@ -599,14 +541,7 @@ def save_csv(issues: list[dict[str, Any]], output_path: Path) -> None:
 
 def build_jql(project: str, text: str | None) -> str:
     """
-    Construye una consulta JQL sencilla.
-
-    Se ordena por key ASC (CASSANDRA-1, CASSANDRA-2, ...) en vez de por
-    fecha: la key de una issue nunca cambia, así que la posición 101-200 de
-    hoy es la misma posición 101-200 de la semana que viene, aunque se hayan
-    creado issues nuevas mientras tanto. Con "ORDER BY created DESC" las
-    issues nuevas se cuelan al principio y corren todos los rangos ya
-    bajados.
+    Builds a basic JQL query. Ordered by ASC key to order by creation date.
     """
     project = project.strip().upper()
     if not project:
@@ -622,89 +557,78 @@ def build_jql(project: str, text: str | None) -> str:
 
 def guess_project_folder(args: argparse.Namespace) -> str:
     """
-    Determina en qué subcarpeta de --output-dir van los resultados, para que
-    cada proyecto tenga la suya y no se mezclen archivos de proyectos
-    distintos en el mismo directorio.
+    Determines in what sub-folder are the results being introduced.
     """
     if args.rpc_timeouts:
         return args.rpc_timeouts.strip().upper()
     if args.project:
         return args.project.strip().upper()
 
-    # Modo --jql: no hay un --project explícito, pero la mayoría de las
-    # queries igual filtran por "project = X". Si lo encontramos, lo usamos
-    # como nombre de carpeta; si no, todo va a una carpeta genérica.
     match = re.search(r'project\s*=\s*"?([A-Za-z0-9_]+)"?', args.jql or "", re.IGNORECASE)
     return match.group(1).upper() if match else "custom_query"
 
 
 def parse_args() -> argparse.Namespace:
-    """Define los argumentos disponibles desde la terminal."""
-    parser = argparse.ArgumentParser(description="Descarga issues desde Apache Jira y las guarda en JSON y CSV.")
+    parser = argparse.ArgumentParser(description="Downloads issues from Jira and saves them in CSV and JSON.")
 
     query_group = parser.add_mutually_exclusive_group(required=True)
-    query_group.add_argument("--project", help="Clave del proyecto, por ejemplo CASSANDRA, KAFKA o HADOOP.")
-    query_group.add_argument("--jql", help='Consulta JQL completa. Ejemplo: project=CASSANDRA AND text~"timeout"')
+    query_group.add_argument("--project", help="Project key.")
+    query_group.add_argument("--jql", help='Complete JQL query. I.e. project=CASSANDRA AND text~"timeout"')
     query_group.add_argument(
         "--rpc-timeouts", metavar="PROJECT",
-        help="Busca automáticamente issues relacionadas con timeouts RPC usando varias palabras clave. "
-             "Ejemplo: --rpc-timeouts CASSANDRA",
+        help="Automatically searches issues related to timeouts/RPC using keywords. "
+             "I.e --rpc-timeouts CASSANDRA",
     )
 
-    parser.add_argument("--text", help="Texto que debe aparecer en la issue. Solo se utiliza junto con --project.")
+    parser.add_argument("--text", help="Text that must appear inside the issue. Used only with --project.")
     parser.add_argument(
         "--limit", type=int, default=None,
-        help="Número máximo final de issues. Sin este argumento se descargan todas. "
-             "No combinar con --start/--end (son formas alternativas de acotar la búsqueda).",
+        help="Max. number of issues. Without this arg, all issues are downloaded. "
+             "Can't combine with --start --end.",
     )
     parser.add_argument(
         "--start", type=int, default=1,
-        help="Posición (1-indexado) de la primera issue a descargar dentro del resultado de la búsqueda. "
-             "Usalo junto con --end para bajar en tandas manuales: primero --start 1 --end 100, después "
-             "--start 101 --end 200, etc. Solo aplica a --project o --jql (no a --rpc-timeouts). Predeterminado: 1",
+        help="Position (1-indexed) of the first issue to donwload in search result. "
+             "Used with --end to manually download"
+             "Default: 1",
     )
     parser.add_argument(
         "--end", type=int, default=None,
-        help="Posición (1-indexado, inclusive) de la última issue a descargar. Sin este argumento, descarga "
-             "desde --start hasta el final del resultado.",
+        help="Position (1-indexed, inclusive) from the last issue to download. Without this arg. it downloads from the start to the end of available issues.",
     )
     parser.add_argument(
         "--limit-per-keyword", type=int, default=None,
-        help="Máximo de resultados por palabra clave cuando se utiliza --rpc-timeouts.",
+        help="Maximum results per keyword when using --rpc-timeouts.",
     )
     parser.add_argument(
         "--filter-criteria", action="store_true",
-        help="Aplica criterios de inclusión/exclusión y genera archivos *_filtered con solo issues relevantes.",
+    help="Applies inclusion/exclusion criteria and generates *_filtered with only relevant issues.",
     )
-    parser.add_argument("--output-dir", default="jira_output", help="Directorio de salida. Predeterminado: jira_output")
-    parser.add_argument("--delay", type=float, default=0.2, help="Pausa entre peticiones en segundos. Predeterminado: 0.2")
+    parser.add_argument("--output-dir", default="jira_output")
+    parser.add_argument("--delay", type=float, default=0.2)
 
     return parser.parse_args()
 
 
 def _validate_args(args: argparse.Namespace) -> str | None:
-    """Devuelve un mensaje de error si los argumentos son inconsistentes, o None si están OK."""
     if args.limit is not None and args.limit <= 0:
-        return "Error: --limit debe ser mayor que cero."
+        return "Error: --limit has to be above 0."
     if args.limit_per_keyword is not None and args.limit_per_keyword <= 0:
-        return "Error: --limit-per-keyword debe ser mayor que cero."
+        return "Error: --limit-per-keyword has to be above 0."
     if args.start <= 0:
-        return "Error: --start debe ser mayor que cero (es 1-indexado)."
+        return "Error: --start has to be above 0."
     if args.end is not None and args.end < args.start:
-        return "Error: --end debe ser mayor o igual que --start."
+        return "Error: --end has to be greater or equal than --start."
     if args.end is not None and args.limit is not None:
-        return "Error: no combines --limit con --start/--end, son formas alternativas de acotar la búsqueda."
+        return "Error: cannot combine --limit with --start/--end"
     if args.rpc_timeouts and (args.start != 1 or args.end is not None):
         return (
-            "Error: --start/--end no está soportado junto con --rpc-timeouts (cada palabra clave arma su "
-            "propio resultado, no hay una numeración única para acotar). Usá --limit-per-keyword y/o --limit "
-            "en ese modo."
+            "Error: --start/--end is not supported with --rpc-timeouts. Use --limit-per-keyword and/or --limit instead"
         )
     return None
 
 
 def _build_query(args: argparse.Namespace) -> tuple[str | None, str]:
-    """Arma el JQL (si aplica) y el prefijo de nombre de archivo según el modo elegido."""
     if args.rpc_timeouts:
         return None, f"{args.rpc_timeouts.upper()}_rpc_timeouts"
 
@@ -716,8 +640,6 @@ def _build_query(args: argparse.Namespace) -> tuple[str | None, str]:
         safe_suffix = "".join(c if c.isalnum() or c in "-_" else "_" for c in suffix)
         base_prefix = f"{args.project.upper()}{safe_suffix}"
 
-    # Si se usó --start/--end, el rango va en el nombre del archivo para que
-    # las tandas (1-100, 101-200, ...) no se pisen entre sí.
     if args.start != 1 or args.end is not None:
         range_suffix = f"_{args.start}-{args.end if args.end is not None else 'fin'}"
     else:
@@ -734,8 +656,6 @@ def main() -> int:
         print(error, file=sys.stderr)
         return 2
 
-    # start_at es 0-indexado (lo que espera la API de Jira); --start/--end
-    # son 1-indexados de cara al usuario.
     start_at = args.start - 1
     range_limit = (args.end - args.start + 1) if args.end is not None else args.limit
 
@@ -748,7 +668,6 @@ def main() -> int:
             keyword_matches = client.search_by_keywords(
                 project=args.rpc_timeouts, keywords=RPC_TIMEOUT_KEYWORDS, limit_per_keyword=args.limit_per_keyword,
             )
-            # Las claves del diccionario son únicas, ya se eliminaron duplicados.
             issue_keys = list(keyword_matches)[: args.limit] if args.limit is not None else list(keyword_matches)
             print(f"\nIssues únicas después de eliminar duplicados: {len(issue_keys)}")
         else:
@@ -767,11 +686,6 @@ def main() -> int:
         normalized_issues: list[dict[str, Any]] = []
 
         def save_results() -> None:
-            """
-            Vuelca a disco lo descargado hasta el momento. Se llama al salir
-            del loop por cualquier motivo (éxito, error o Ctrl+C), para no
-            perder el trabajo ya hecho si el proceso se corta a mitad de tanda.
-            """
             if args.filter_criteria:
                 filtered = apply_selection_criteria(normalized_issues)
                 save_json(normalized_issues, json_path)
@@ -790,27 +704,24 @@ def main() -> int:
                 normalized["matched_keywords"] = keyword_matches.get(issue_key, [])
                 normalized_issues.append(normalized)
         finally:
-            # Se ejecuta siempre: al terminar bien, al cortar con Ctrl+C, o
-            # si get_issue/normalize_issue tira un error. Así el trabajo ya
-            # bajado queda guardado pase lo que pase.
             save_results()
 
-        print("\nProceso terminado.")
-        print(f"Issues descargadas: {len(normalized_issues)}")
+        print("\nDone.")
+        print(f"Donwloaded issues: {len(normalized_issues)}")
         print(f"JSON: {json_path.resolve()}")
         print(f"CSV:  {csv_path.resolve()}")
         if args.filter_criteria:
             filtered_count = sum(1 for issue in normalized_issues if issue.get("selection_included"))
-            print(f"Issues incluidas por criterios: {filtered_count}")
-            print(f"JSON filtrado: {filtered_json_path.resolve()}")
-            print(f"CSV filtrado:  {filtered_csv_path.resolve()}")
+            print(f"Issues included by criteria: {filtered_count}")
+            print(f"Filtered JSON: {filtered_json_path.resolve()}")
+            print(f"Filtered CSV:  {filtered_csv_path.resolve()}")
         return 0
 
     except JiraScraperError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        print("\nProceso cancelado.", file=sys.stderr)
+        print("\nProcess canceled.", file=sys.stderr)
         return 130
 
 
